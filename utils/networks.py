@@ -3,11 +3,14 @@ from typing import Any, Optional, Sequence
 import distrax
 import flax.linen as nn
 import jax.numpy as jnp
-
+from flax.linen.initializers import orthogonal, constant
 
 def default_init(scale=1.0):
     """Default kernel initializer."""
     return nn.initializers.variance_scaling(scale, 'fan_avg', 'uniform')
+
+def orthogonal_init(scale=1.0):
+    return orthogonal(scale)
 
 
 def ensemblize(cls, num_qs, in_axes=None, out_axes=0, **kwargs):
@@ -46,11 +49,12 @@ class MLP(nn.Module):
     activate_final: bool = False
     kernel_init: Any = default_init()
     layer_norm: bool = False
+    bias_init: callable = nn.initializers.zeros
 
     @nn.compact
     def __call__(self, x):
         for i, size in enumerate(self.hidden_dims):
-            x = nn.Dense(size, kernel_init=self.kernel_init)(x)
+            x = nn.Dense(size, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
             if i + 1 < len(self.hidden_dims) or self.activate_final:
                 x = self.activations(x)
                 if self.layer_norm:
@@ -106,10 +110,18 @@ class Actor(nn.Module):
     encoder: nn.Module = None
 
     def setup(self):
-        self.actor_net = MLP(self.hidden_dims, activate_final=True, layer_norm=self.layer_norm)
-        self.mean_net = nn.Dense(self.action_dim, kernel_init=default_init(self.final_fc_init_scale))
+        self.actor_net = MLP(self.hidden_dims, 
+                             activate_final=True, 
+                             layer_norm=self.layer_norm, 
+                             kernel_init=orthogonal(jnp.sqrt(2)),
+                             bias_init=constant(0.0))
+        self.mean_net = nn.Dense(self.action_dim, 
+                                 kernel_init=orthogonal_init(self.final_fc_init_scale), 
+                                 bias_init=constant(0.0))
         if self.state_dependent_std:
-            self.log_std_net = nn.Dense(self.action_dim, kernel_init=default_init(self.final_fc_init_scale))
+            self.log_std_net = nn.Dense(self.action_dim, 
+                                        kernel_init=orthogonal_init(self.final_fc_init_scale),
+                                        bias_init=constant(0.0))
         else:
             if not self.const_std:
                 self.log_stds = self.param('log_stds', nn.initializers.zeros, (self.action_dim,))
@@ -142,11 +154,91 @@ class Actor(nn.Module):
 
         log_stds = jnp.clip(log_stds, self.log_std_min, self.log_std_max)
 
-        distribution = distrax.MultivariateNormalDiag(loc=means, scale_diag=jnp.exp(log_stds) * temperature)
+        distribution = distrax.MultivariateNormalDiag(loc=means, 
+                                                      scale_diag=jnp.exp(log_stds) * temperature)
         if self.tanh_squash:
             distribution = TransformedWithMode(distribution, distrax.Block(distrax.Tanh(), ndims=1))
 
         return distribution
+    
+    # def evaluate_log_pi(self, states, actions):
+    #     """Compute the log-probability of given actions under the policy.
+
+    #     This method re-computes the Gaussian parameters and then evaluates the log probability,
+    #     taking into account the tanh squashing transformation.
+    #     """
+    #     # TODO: This follows the original implementation, need to check if we can make this more efficient.
+    #     # Forward pass to obtain the Gaussian parameters.
+    #     if self.encoder is not None:
+    #         inputs = self.encoder(states)
+    #     else:
+    #         inputs = states
+    #     outputs = self.actor_net(inputs)
+    #     means = self.mean_net(outputs)
+    #     if self.state_dependent_std:
+    #         log_stds = self.log_std_net(outputs)
+    #     else:
+    #         if self.const_std:
+    #             log_stds = jnp.zeros_like(means)
+    #         else:
+    #             log_stds = self.log_stds
+    #     log_stds = jnp.clip(log_stds, self.log_std_min, self.log_std_max)
+        
+    #     # Compute the "pre-squash" log probability.
+    #     # Transform actions back through atanh.
+    #     noises = (jnp.arctanh(actions) - means) / (jnp.exp(log_stds) + 1e-8)
+    #     gaussian_log_probs = (
+    #         jnp.sum(-0.5 * (noises ** 2) - log_stds, axis=-1, keepdims=True)
+    #         - 0.5 * jnp.log(2 * jnp.pi) * log_stds.shape[-1]
+    #     )
+    #     # Adjust for the tanh squashing transformation.
+    #     log_det = jnp.sum(jnp.log(1 - actions**2 + 1e-6), axis=-1, keepdims=True)
+    #     return gaussian_log_probs - log_det
+class ppoCritic(nn.Module):
+    """Critic network with orthogonal initialization.
+    
+    The first two dense layers use orthogonal initialization with scale √2,
+    and the final layer uses orthogonal initialization with scale 1.0.
+
+    Follows the blog post: 
+    https://towardsdatascience.com/breaking-down-state-of-the-art-ppo-implementations-in-jax-6f102c06c149/
+    """
+    hidden_dims: Sequence[int]
+    layer_norm: bool = True
+    encoder: nn.Module = None
+
+    def setup(self):
+        # Instead of a generic MLP, we explicitly construct the network
+        # to control each layer's initializer.
+        self.dense1 = nn.Dense(
+            64,
+            kernel_init=orthogonal(jnp.sqrt(2)),
+            bias_init=constant(0.0)
+        )
+        self.dense2 = nn.Dense(
+            64,
+            kernel_init=orthogonal(jnp.sqrt(2)),
+            bias_init=constant(0.0)
+        )
+        # Final output layer with scale 1.0.
+        self.out = nn.Dense(
+            1,
+            kernel_init=orthogonal(1.0),
+            bias_init=constant(0.0)
+        )
+
+    def __call__(self, observations, actions=None):
+        # Optionally process observations with an encoder.
+        inputs = [self.encoder(observations)] if self.encoder is not None else [observations]
+        if actions is not None:
+            inputs.append(actions)
+        x = jnp.concatenate(inputs, axis=-1)
+        x = self.dense1(x)
+        x = nn.tanh(x)
+        x = self.dense2(x)
+        x = nn.tanh(x)
+        v = self.out(x)
+        return jnp.squeeze(v, axis=-1)
 
 
 class Value(nn.Module):

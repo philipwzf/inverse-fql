@@ -43,7 +43,7 @@ class Dataset(FrozenDict):
             **fields: Keys and values of the dataset.
         """
         data = fields
-        assert 'observations' in data
+        assert 'states' in data
         if freeze:
             jax.tree_util.tree_map(lambda arr: arr.setflags(write=False), data)
         return cls(data)
@@ -56,7 +56,7 @@ class Dataset(FrozenDict):
         self.return_next_actions = False  # Whether to additionally return next actions; set outside the class.
 
         # Compute terminal and initial locations.
-        self.terminal_locs = np.nonzero(self['terminals'] > 0)[0]
+        self.terminal_locs = np.nonzero(self['dones'] > 0)[0]
         self.initial_locs = np.concatenate([[0], self.terminal_locs[:-1] + 1])
 
     def get_random_idxs(self, num_idxs):
@@ -76,17 +76,17 @@ class Dataset(FrozenDict):
             for i in reversed(range(self.frame_stack)):
                 # Use the initial state if the index is out of bounds.
                 cur_idxs = np.maximum(idxs - i, initial_state_idxs)
-                obs.append(jax.tree_util.tree_map(lambda arr: arr[cur_idxs], self['observations']))
+                obs.append(jax.tree_util.tree_map(lambda arr: arr[cur_idxs], self['states']))
                 if i != self.frame_stack - 1:
-                    next_obs.append(jax.tree_util.tree_map(lambda arr: arr[cur_idxs], self['observations']))
-            next_obs.append(jax.tree_util.tree_map(lambda arr: arr[idxs], self['next_observations']))
+                    next_obs.append(jax.tree_util.tree_map(lambda arr: arr[cur_idxs], self['states']))
+            next_obs.append(jax.tree_util.tree_map(lambda arr: arr[idxs], self['next_states']))
 
-            batch['observations'] = jax.tree_util.tree_map(lambda *args: np.concatenate(args, axis=-1), *obs)
-            batch['next_observations'] = jax.tree_util.tree_map(lambda *args: np.concatenate(args, axis=-1), *next_obs)
+            batch['states'] = jax.tree_util.tree_map(lambda *args: np.concatenate(args, axis=-1), *obs)
+            batch['next_states'] = jax.tree_util.tree_map(lambda *args: np.concatenate(args, axis=-1), *next_obs)
         if self.p_aug is not None:
             # Apply random-crop image augmentation.
             if np.random.rand() < self.p_aug:
-                self.augment(batch, ['observations', 'next_observations'])
+                self.augment(batch, ['states', 'next_states'])
         return batch
 
     def get_subset(self, idxs):

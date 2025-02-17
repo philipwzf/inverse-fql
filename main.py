@@ -36,7 +36,7 @@ flags.DEFINE_integer('eval_interval', 100000, 'Evaluation interval.')
 flags.DEFINE_integer('save_interval', 1000000, 'Saving interval.')
 
 flags.DEFINE_integer('eval_episodes', 50, 'Number of evaluation episodes.')
-flags.DEFINE_integer('video_episodes', 0, 'Number of video episodes for each task.')
+flags.DEFINE_integer('video_episodes', 1, 'Number of video episodes for each task.')
 flags.DEFINE_integer('video_frame_skip', 3, 'Frame skip for videos.')
 
 flags.DEFINE_float('p_aug', None, 'Probability of applying image augmentation.')
@@ -49,7 +49,7 @@ config_flags.DEFINE_config_file('agent', 'agents/fql.py', lock_config=False)
 def main(_):
     # Set up logger.
     exp_name = get_exp_name(FLAGS.seed)
-    setup_wandb(project='fql', group=FLAGS.run_group, name=exp_name)
+    setup_wandb(project='ppo', group=FLAGS.run_group, name=exp_name)
 
     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, FLAGS.run_group, exp_name)
     os.makedirs(FLAGS.save_dir, exist_ok=True)
@@ -60,10 +60,6 @@ def main(_):
     # Make environment and datasets.
     config = FLAGS.agent
     env, eval_env, train_dataset, val_dataset = make_env_and_datasets(FLAGS.env_name, frame_stack=FLAGS.frame_stack)
-    if FLAGS.video_episodes > 0:
-        assert 'singletask' in FLAGS.env_name, 'Rendering is currently only supported for OGBench environments.'
-    if FLAGS.online_steps > 0:
-        assert 'visual' not in FLAGS.env_name, 'Online fine-tuning is currently not supported for visual environments.'
 
     # Initialize agent.
     random.seed(FLAGS.seed)
@@ -93,13 +89,13 @@ def main(_):
     example_batch = train_dataset.sample(1)
 
     agent_class = agents[config['agent_name']]
+    agent_class = agents['cbffql']
     agent = agent_class.create(
         FLAGS.seed,
         example_batch['observations'],
         example_batch['actions'],
         config,
     )
-
     # Restore agent.
     if FLAGS.restore_path is not None:
         agent = restore_agent(agent, FLAGS.restore_path, FLAGS.restore_epoch)
@@ -135,6 +131,8 @@ def main(_):
             action = np.array(action)
 
             next_ob, reward, terminated, truncated, info = env.step(action.copy())
+            cost = info['cost']
+
             done = terminated or truncated
 
             if 'antmaze' in FLAGS.env_name and (
@@ -148,6 +146,7 @@ def main(_):
                     observations=ob,
                     actions=action,
                     rewards=reward,
+                    costs=cost,
                     terminals=float(done),
                     masks=1.0 - terminated,
                     next_observations=next_ob,
