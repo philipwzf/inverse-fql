@@ -10,6 +10,8 @@ import optax
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.networks import Actor, LogParam, Value, ppoCritic
 from utils.buffer import RolloutBuffer
+from jax.experimental import checkify
+
 
 # def calculate_gae(dones, values, rewards, next_values, gamma, lambd):
 #     """
@@ -65,7 +67,6 @@ from utils.buffer import RolloutBuffer
 #     gae_std = jnp.std(advantages) + 1e-8
 #     gaes_norm = (advantages - gae_mean) / gae_std
 #     return targets, gaes_norm
-
 def calculate_gae(dones, values, rewards, next_values, gamma, lambd):
     """
     Compute GAE using a reverse scan. Assumes that `next_values` is an array of 
@@ -87,14 +88,11 @@ def calculate_gae(dones, values, rewards, next_values, gamma, lambd):
     
     # Run a reverse scan (from T-1 down to 0).
     initial_carry = 0.0  # starting with zero advantage from the future.
-    _, gaes_rev = jax.lax.scan(scan_fn, 
+    _, gaes = jax.lax.scan(scan_fn, 
                                initial_carry, 
                                inputs, 
                                reverse=True,
                                unroll=16,)
-    
-    # Reverse the advantages back to the original order.
-    gaes = gaes_rev[::-1]
     
     # Compute targets as advantages plus values.
     targets = gaes + values
@@ -320,7 +318,7 @@ def get_config():
         batch_size= 256,
         actor_hidden_dims= (64, 64),
         value_hidden_dims= (64, 64),
-        layer_norm=False,  # Whether to use layer normalization.
+        layer_norm=True,  # Whether to use layer normalization.
         actor_layer_norm=False,  # Whether to use layer normalization for the actor.
         discount= 0.995,
         lambd= 0.97,

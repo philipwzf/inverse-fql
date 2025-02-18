@@ -167,7 +167,7 @@ class Actor(nn.Module):
     #     This method re-computes the Gaussian parameters and then evaluates the log probability,
     #     taking into account the tanh squashing transformation.
     #     """
-    #     # TODO: This follows the original implementation, need to check if we can make this more efficient.
+    #     # This follows the original implementation, need to check if we can make this more efficient.
     #     # Forward pass to obtain the Gaussian parameters.
     #     if self.encoder is not None:
     #         inputs = self.encoder(states)
