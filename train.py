@@ -130,18 +130,7 @@ def main(_):
         done = terminated or truncated
 
         # Store the transition in the functional buffer.
-        agent.store_transition(ob, action, reward, float(done), log_pi, next_ob)
-        # replay_buffer.add_transition(
-        #         dict(
-        #             observations=ob,
-        #             actions=action,
-        #             rewards=reward,
-        #             terminals=float(done),
-        #             log_pis=log_pi,
-        #             masks=1.0 - terminated,
-        #             next_observations=next_ob,
-        #         )
-        #     )
+        agent.store_transition(ob, action, reward, done, log_pi, next_ob)
 
         ob = next_ob
         step += 1

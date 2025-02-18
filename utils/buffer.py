@@ -101,6 +101,7 @@ class RolloutBuffer:
             idx = int(self.state.idx)
             return jax.tree.map(lambda arr: jnp.concatenate([arr[idx:], arr[:idx]], axis=0), self.state.data)
 
+# Tested on 2/18/2025, buffer should be working correctly.
 def test_buffer():
     SAMPLE_ITEM = {
         'state': jnp.zeros((4,)),  # 4-dimensional state vector
@@ -123,7 +124,7 @@ def test_buffer():
         """
         Test that pushing items updates the buffer correctly and that `get` returns items in the correct order.
         """
-        max_size = 5
+        max_size = 2
         buffer = RolloutBuffer(SAMPLE_ITEM, max_size)
         
         # Push a single item and verify it appears in get()

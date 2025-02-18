@@ -11,94 +11,99 @@ from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.networks import Actor, LogParam, Value, ppoCritic
 from utils.buffer import RolloutBuffer
 
-def calculate_gae(dones, values, rewards, last_val, gamma, gae_lambda):
-    """
-    Compute advantages and targets using the sample-code style but with direct arrays.
+# def calculate_gae(dones, values, rewards, next_values, gamma, lambd):
+#     """
+#     Compute advantages and targets using the sample-code style but with direct arrays.
     
-    Args:
-      dones:   Array of done flags of shape (T, 1) (will be squeezed to (T,)).
-      values:  Array of value estimates of shape (T, 1) (will be squeezed to (T,)).
-      rewards: Array of rewards of shape (T, 1) (will be squeezed to (T,)).
-      last_val: Scalar value (or 0-D array) representing the value estimate for the timestep after the trajectory.
-      gamma: Discount factor.
-      gae_lambda: GAE lambda parameter.
+#     Args:
+#       dones:   Array of done flags of shape (T, 1) (will be squeezed to (T,)).
+#       values:  Array of value estimates of shape (T, 1) (will be squeezed to (T,)).
+#       rewards: Array of rewards of shape (T, 1) (will be squeezed to (T,)).
+#       next_values: Scalar value (or 0-D array) representing the value estimate for the timestep after the trajectory.
+#       gamma: Discount factor.
+#       lambd: GAE lambda parameter.
     
-    Returns:
-      advantages: Array of advantage estimates (shape (T,)).
-      targets:    Array of targets computed as advantages + values (shape (T,)).
-    """
-    # # Remove extra dimensions so each element is a scalar.
-    dones = jnp.squeeze(dones, axis=-1)    # shape becomes (T,)
-    rewards = jnp.squeeze(rewards, axis=-1)  # shape becomes (T,)
+#     Returns:
+#       advantages: Array of advantage estimates (shape (T,)).
+#       targets:    Array of targets computed as advantages + values (shape (T,)).
+#     """
+#     # # Remove extra dimensions so each element is a scalar.
+#     dones = jnp.squeeze(dones, axis=-1)    # shape becomes (T,)
+#     rewards = jnp.squeeze(rewards, axis=-1)  # shape becomes (T,)
     
-    # Initialize the carry as a tuple: (gae, next_value).
-    # Here, gae is initialized to zero and next_value to last_val.
-    last_val = last_val[-1]
-    init_carry = (jnp.zeros_like(last_val), last_val)
-    # print(f"init_carry: {init_carry[0].shape, init_carry[1].shape}")
+#     # Initialize the carry as a tuple: (gae, next_value).
+#     # Here, gae is initialized to zero and next_value to last_val.
+#     next_values = next_values[-1]
+#     init_carry = (jnp.zeros_like(next_values), next_values)
+#     # print(f"init_carry: {init_carry[0].shape, init_carry[1].shape}")
     
-    def scan_fn(carry, inputs):
-        gae, next_value = carry
-        d, v, r = inputs
-        print(f"d: {d.shape}, v: {v.shape}, r: {r.shape}")
-        delta = r + gamma * next_value * (1 - d) - v
-        new_gae = delta + gamma * gae_lambda * (1 - d) * gae
-        # Pass the current state's value to the next iteration.
-        new_carry = (new_gae, v)
-        return new_carry, new_gae
+#     def scan_fn(carry, inputs):
+#         gae, next_value = carry
+#         d, v, r = inputs
+#         delta = r + gamma * next_value * (1 - d) - v
+#         new_gae = delta + gamma * lambd * (1 - d) * gae
+#         # Pass the current state's value to the next iteration.
+#         new_carry = (new_gae, v)
+#         return new_carry, new_gae
 
-    # Perform a reverse scan over the trajectory.
-    # reverse=True makes the scan iterate from the last timestep to the first.
-    _, advantages_rev = jax.lax.scan(
-        scan_fn,
-        init_carry,
-        (dones, values, rewards),
-        reverse=True,
-        unroll=16,
-    )
-    # Reverse the advantages so that they align with the original order.
-    advantages = advantages_rev[::-1]
-    # Compute targets as advantages plus the original values.
-    targets = advantages + values
+#     # Perform a reverse scan over the trajectory.
+#     # reverse=True makes the scan iterate from the last timestep to the first.
+#     _, advantages_rev = jax.lax.scan(
+#         scan_fn,
+#         init_carry,
+#         (dones, values, rewards),
+#         reverse=True,
+#         unroll=16,
+#     )
+#     # Reverse the advantages so that they align with the original order.
+#     advantages = advantages_rev[::-1]
+#     # Compute targets as advantages plus the original values.
+#     targets = advantages + values
 
-        # Normalize advantages.
-    gae_mean = jnp.mean(advantages)
-    gae_std = jnp.std(advantages) + 1e-8
-    gaes_norm = (advantages - gae_mean) / gae_std
-    return targets, gaes_norm
-
-
-# def calculate_gae(
-#     values: jnp.ndarray,
-#     rewards: jnp.ndarray,
-#     dones: jnp.ndarray,
-#     next_values: jnp.ndarray,
-#     discount: float,
-#     lambd: float
-# ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-#     """Compute targets and normalized advantages using GAE."""
-#     # Temporal differences
-#     deltas = rewards + discount * next_values * (1.0 - dones) - values
-
-#     # Reverse-scan to compute advantages.
-#     def scan_fn(carry, elem):
-#         done, delta = elem
-#         gae = delta + discount * lambd * (1.0 - done) * carry
-#         return gae, gae
-
-#     _, gaes_rev = jax.lax.scan(
-#     scan_fn,
-#     jnp.zeros((1,), dtype=jnp.float32),  # initial carry with shape (1,)
-#     (dones[::-1], deltas[::-1])
-# )
-#     gaes = gaes_rev[::-1]
-#     targets = gaes + values
-
-#     # Normalize advantages.
-#     gae_mean = jnp.mean(gaes)
-#     gae_std = jnp.std(gaes) + 1e-8
-#     gaes_norm = (gaes - gae_mean) / gae_std
+#         # Normalize advantages.
+#     gae_mean = jnp.mean(advantages)
+#     gae_std = jnp.std(advantages) + 1e-8
+#     gaes_norm = (advantages - gae_mean) / gae_std
 #     return targets, gaes_norm
+
+def calculate_gae(dones, values, rewards, next_values, gamma, lambd):
+    """
+    Compute GAE using a reverse scan. Assumes that `next_values` is an array of 
+    the next state values for each timestep, with shape (T,).
+    """
+    # Remove extra dimensions.
+    dones = jnp.squeeze(dones, axis=-1)    # shape (T,)
+    rewards = jnp.squeeze(rewards, axis=-1)  # shape (T,)
+
+    # Define the scan function. The carry here is the accumulated GAE from the future.
+    def scan_fn(carry, inputs):
+        d, v, r, nv = inputs  # nv: next state's value for this timestep
+        delta = r + gamma * nv * (1 - d) - v
+        new_gae = delta + gamma * lambd * (1 - d) * carry
+        return new_gae, new_gae
+
+    # Prepare inputs for the scan. Note that next_values is now an array.
+    inputs = (dones, values, rewards, next_values)
+    
+    # Run a reverse scan (from T-1 down to 0).
+    initial_carry = 0.0  # starting with zero advantage from the future.
+    _, gaes_rev = jax.lax.scan(scan_fn, 
+                               initial_carry, 
+                               inputs, 
+                               reverse=True,
+                               unroll=16,)
+    
+    # Reverse the advantages back to the original order.
+    gaes = gaes_rev[::-1]
+    
+    # Compute targets as advantages plus values.
+    targets = gaes + values
+
+    # Normalize advantages.
+    gae_mean = jnp.mean(gaes)
+    gae_std = jnp.std(gaes) + 1e-8
+    gaes_norm = (gaes - gae_mean) / gae_std
+    return targets, gaes_norm
 
 class PPOAgent(flax.struct.PyTreeNode):
     """PPO agent in a similar style as the SAC agent."""
@@ -132,18 +137,15 @@ class PPOAgent(flax.struct.PyTreeNode):
         #     values = jnp.mean(values, axis=0).reshape(-1, 1)
         # if next_values.ndim == 2:
         #     next_values = jnp.mean(next_values, axis=0).reshape(-1, 1)
+
         # Compute targets and advantages using GAE.
-        # targets, gaes = calculate_gae(
-        #     values, rewards, dones, next_values,
-        #     self.config['discount'], self.config['lambd']
-        # )
         targets, gaes = calculate_gae(
                             dones=dones,
                             values=values,
                             rewards=rewards,
-                            last_val=next_values,  # assuming next_values is a scalar or a 0-D array; if it's (batch_size,1), consider squeezing.
+                            next_values=next_values,  # assuming next_values is a scalar or a 0-D array; if it's (batch_size,1), consider squeezing.
                             gamma=self.config['discount'],
-                            gae_lambda=self.config['lambd']
+                            lambd=self.config['lambd']
                         )
 
         # Critic loss (mean squared error).
@@ -186,45 +188,6 @@ class PPOAgent(flax.struct.PyTreeNode):
         new_network, info = self.network.apply_loss_fn(loss_fn=loss_fn)
         return self.replace(network=new_network, rng=new_rng), info
 
-    def _update_minibatch_epoch(self, batch):
-        """
-        Perform one pass over the full batch (shuffled and divided into minibatches)
-        and update the agent via lax.scan over minibatches.
-        """
-        num_samples = batch['states'].shape[0]
-        minibatch_size = self.config['batch_size']
-        num_minibatches = num_samples // minibatch_size
-
-        self.rng, subkey = jax.random.split(self.rng)
-        perm = jax.random.permutation(subkey, num_samples)
-        minibatch_indices = perm.reshape((num_minibatches, minibatch_size))
-
-        def update_minibatch(agent, indices):
-            minibatch = {k: v[indices] for k, v in batch.items()}
-            agent, info = agent.update(minibatch)
-            return agent, info
-
-        def scan_fn(carry, indices):
-            agent = carry
-            agent, _ = update_minibatch(agent, indices)
-            return agent, None
-
-        updated_agent, _ = jax.lax.scan(scan_fn, self, minibatch_indices)
-        return updated_agent
-
-    def update_epoch(self, batch):
-        """
-        Perform multiple passes (update epochs) over the batch.
-        This mirrors the hierarchical update loop in the sample.
-        """
-        num_update_epochs = self.config.get("update_epochs", 1)
-        def epoch_fn(agent, _):
-            agent = agent._update_minibatch_epoch(batch)
-            return agent, None
-
-        updated_agent, _ = jax.lax.scan(epoch_fn, self, None, length=num_update_epochs)
-        return updated_agent
-
     @jax.jit
     def sample_actions(
         self,
@@ -256,8 +219,6 @@ class PPOAgent(flax.struct.PyTreeNode):
         # For a diagonal Gaussian, the 'mode' is its mean (also called 'loc' in some distributions).
         # If your policy distribution object doesn't have a `.mode` method, use `.mean`.
         best_action = dist.mean()  # or dist.mode if available
-        print(f"best_action: {best_action.shape}")
-        print(best_action)
 
         # (Optional) Clip actions if the environment action space is [-1, 1].
         best_action = jnp.clip(best_action, -1, 1)
@@ -279,7 +240,7 @@ class PPOAgent(flax.struct.PyTreeNode):
             'actions': action,
             'rewards': jnp.array([reward], dtype=jnp.float32),
             # 'costs': jnp.array([cost], dtype=jnp.float32),
-            'dones': jnp.array([done], dtype=jnp.float32),
+            'dones': jnp.array([done], dtype=jnp.int32),
             'log_pis': jnp.array([log_pi], dtype=jnp.float32),
             'next_states': next_state,
         }
@@ -365,7 +326,7 @@ def get_config():
         lambd= 0.97,
         clip_eps= 0.2,
         coef_ent= 0.1,
-        value_coef= 0.5,
+        value_coef= 1.0,
         tanh_squash=False,
         state_dependent_std=False,
         actor_fc_scale=0.01,
